@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException
 from shared.logging_config import setup_logger
 from shared.middleware import RequestContextMiddleware
+from shared.log_shipper import ship_log
 import httpx
 
 app = FastAPI(title="order-service")
@@ -19,9 +20,10 @@ async def health():
 @app.post("/create-order")
 async def create_order(request: Request):
     request_id = request.state.request_id
+    message = "Order creation started"
 
     logger.info(
-        "Order creation started",
+        message,
         extra={
             "service": "order-service",
             "request_id": request_id,
@@ -30,6 +32,7 @@ async def create_order(request: Request):
             "status_code": 200,
         },
     )
+    await ship_log("order-service", "INFO", message, request_id, "/create-order", "POST", 200)
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -40,8 +43,10 @@ async def create_order(request: Request):
             response.raise_for_status()
             payment_result = response.json()
 
+        success_message = "Order created successfully"
+
         logger.info(
-            "Order created successfully",
+            success_message,
             extra={
                 "service": "order-service",
                 "request_id": request_id,
@@ -50,6 +55,7 @@ async def create_order(request: Request):
                 "status_code": 200,
             },
         )
+        await ship_log("order-service", "INFO", success_message, request_id, "/create-order", "POST", 200)
 
         return {
             "service": "order-service",
@@ -59,8 +65,10 @@ async def create_order(request: Request):
         }
 
     except Exception as exc:
+        error_message = f"Order creation failed due to payment-service error: {str(exc)}"
+
         logger.error(
-            f"Order creation failed due to payment-service error: {str(exc)}",
+            error_message,
             extra={
                 "service": "order-service",
                 "request_id": request_id,
@@ -69,4 +77,6 @@ async def create_order(request: Request):
                 "status_code": 500,
             },
         )
+        await ship_log("order-service", "ERROR", error_message, request_id, "/create-order", "POST", 500)
+
         raise HTTPException(status_code=500, detail="Order creation failed")

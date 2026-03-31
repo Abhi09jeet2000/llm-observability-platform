@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException
 from shared.logging_config import setup_logger
 from shared.middleware import RequestContextMiddleware
+from shared.log_shipper import ship_log
 import httpx
 
 app = FastAPI(title="user-service")
@@ -19,9 +20,10 @@ async def health():
 @app.get("/profile/{user_id}")
 async def get_profile(user_id: int, request: Request):
     request_id = request.state.request_id
+    message = f"Fetching profile for user {user_id}"
 
     logger.info(
-        f"Fetching profile for user {user_id}",
+        message,
         extra={
             "service": "user-service",
             "request_id": request_id,
@@ -30,6 +32,7 @@ async def get_profile(user_id: int, request: Request):
             "status_code": 200,
         },
     )
+    await ship_log("user-service", "INFO", message, request_id, f"/profile/{user_id}", "GET", 200)
 
     return {
         "service": "user-service",
@@ -42,9 +45,10 @@ async def get_profile(user_id: int, request: Request):
 @app.post("/checkout")
 async def checkout(request: Request):
     request_id = request.state.request_id
+    message = "Checkout started"
 
     logger.info(
-        "Checkout started",
+        message,
         extra={
             "service": "user-service",
             "request_id": request_id,
@@ -53,6 +57,7 @@ async def checkout(request: Request):
             "status_code": 200,
         },
     )
+    await ship_log("user-service", "INFO", message, request_id, "/checkout", "POST", 200)
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -63,8 +68,10 @@ async def checkout(request: Request):
             response.raise_for_status()
             order_result = response.json()
 
+        success_message = "Checkout completed successfully"
+
         logger.info(
-            "Checkout completed successfully",
+            success_message,
             extra={
                 "service": "user-service",
                 "request_id": request_id,
@@ -73,6 +80,7 @@ async def checkout(request: Request):
                 "status_code": 200,
             },
         )
+        await ship_log("user-service", "INFO", success_message, request_id, "/checkout", "POST", 200)
 
         return {
             "service": "user-service",
@@ -82,8 +90,10 @@ async def checkout(request: Request):
         }
 
     except Exception as exc:
+        error_message = f"Checkout failed due to order-service error: {str(exc)}"
+
         logger.error(
-            f"Checkout failed due to order-service error: {str(exc)}",
+            error_message,
             extra={
                 "service": "user-service",
                 "request_id": request_id,
@@ -92,4 +102,6 @@ async def checkout(request: Request):
                 "status_code": 500,
             },
         )
+        await ship_log("user-service", "ERROR", error_message, request_id, "/checkout", "POST", 500)
+
         raise HTTPException(status_code=500, detail="Checkout failed")

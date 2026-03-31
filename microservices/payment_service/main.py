@@ -1,8 +1,9 @@
 from fastapi import FastAPI, Request, HTTPException
 from shared.logging_config import setup_logger
 from shared.middleware import RequestContextMiddleware
+from shared.log_shipper import ship_log
 import random
-import time
+import asyncio
 
 app = FastAPI(title="payment-service")
 app.add_middleware(RequestContextMiddleware)
@@ -18,9 +19,10 @@ async def health():
 @app.post("/pay")
 async def process_payment(request: Request):
     request_id = request.state.request_id
+    message = "Payment request received"
 
     logger.info(
-        "Payment request received",
+        message,
         extra={
             "service": "payment-service",
             "request_id": request_id,
@@ -29,15 +31,16 @@ async def process_payment(request: Request):
             "status_code": 200,
         },
     )
+    await ship_log("payment-service", "INFO", message, request_id, "/pay", "POST", 200)
 
-    # Simulate occasional latency
     delay = random.choice([0.1, 0.2, 0.5, 1.5])
-    time.sleep(delay)
+    await asyncio.sleep(delay)
 
-    # Simulate anomaly / failure sometimes
     if random.random() < 0.25:
+        error_message = "Database timeout while processing payment"
+
         logger.error(
-            "Database timeout while processing payment",
+            error_message,
             extra={
                 "service": "payment-service",
                 "request_id": request_id,
@@ -46,10 +49,13 @@ async def process_payment(request: Request):
                 "status_code": 500,
             },
         )
+        await ship_log("payment-service", "ERROR", error_message, request_id, "/pay", "POST", 500)
         raise HTTPException(status_code=500, detail="Payment processing failed")
 
+    success_message = "Payment processed successfully"
+
     logger.info(
-        "Payment processed successfully",
+        success_message,
         extra={
             "service": "payment-service",
             "request_id": request_id,
@@ -58,6 +64,7 @@ async def process_payment(request: Request):
             "status_code": 200,
         },
     )
+    await ship_log("payment-service", "INFO", success_message, request_id, "/pay", "POST", 200)
 
     return {
         "service": "payment-service",
