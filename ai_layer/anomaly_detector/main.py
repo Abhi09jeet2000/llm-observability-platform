@@ -7,12 +7,22 @@ from shared.anomaly_store import (
     get_logs,
     add_anomaly,
     get_anomalies,
-    TEMPLATE_COUNTS,
-    TEMPLATE_FIRST_SEEN,
-    TEMPLATE_REQUEST_IDS,
+    add_to_request_group,
+    add_to_template_window,
+    get_template_window_count,
+    set_first_seen,
+    get_first_seen,
+    should_emit_anomaly,
+    create_or_update_incident,
+    serialize_incidents,
+    WINDOW_SECONDS,
 )
 
 app = FastAPI(title="anomaly-detector")
+
+
+SPIKE_THRESHOLD = 8
+ERROR_BURST_THRESHOLD = 3
 
 
 @app.get("/health")
@@ -24,6 +34,7 @@ async def health():
 async def ingest_log(log: LogEvent):
     normalized_message = normalize_message(log.message)
     template_key = generate_template_key(normalized_message)
+    ts = datetime.fromisoformat(log.timestamp)
 
     log_record = {
         "timestamp": log.timestamp,
@@ -39,43 +50,63 @@ async def ingest_log(log: LogEvent):
     }
 
     add_log(log_record)
+    add_to_request_group(log.request_id, log_record)
+    create_or_update_incident(log.request_id, log_record)
 
-    TEMPLATE_COUNTS[(log.service, template_key)] += 1
-    TEMPLATE_REQUEST_IDS[(log.service, template_key)].append(log.request_id)
+    add_to_template_window(log.service, template_key, ts)
+    current_count = get_template_window_count(log.service, template_key)
 
-    if (log.service, template_key) not in TEMPLATE_FIRST_SEEN:
-        TEMPLATE_FIRST_SEEN[(log.service, template_key)] = datetime.utcnow()
+    first_seen = get_first_seen(log.service, template_key)
+    if first_seen is None:
+        set_first_seen(log.service, template_key, ts)
 
         anomaly = AnomalyEvent(
             anomaly_type="new_template",
             service=log.service,
             message=normalized_message,
             template_key=template_key,
-            count=TEMPLATE_COUNTS[(log.service, template_key)],
+            count=current_count,
             level=log.level,
-            request_ids=TEMPLATE_REQUEST_IDS[(log.service, template_key)][-5:],
+            request_ids=[log.request_id],
+            window_seconds=WINDOW_SECONDS,
+            reason="First time this normalized template was seen for this service.",
         )
-        add_anomaly(anomaly.dict())
+        add_anomaly(anomaly.model_dump())
 
-    if log.level.upper() == "ERROR":
-        count = TEMPLATE_COUNTS[(log.service, template_key)]
+    if current_count >= SPIKE_THRESHOLD and should_emit_anomaly(log.service, template_key, "spike", ts):
+        anomaly = AnomalyEvent(
+            anomaly_type="spike",
+            service=log.service,
+            message=normalized_message,
+            template_key=template_key,
+            count=current_count,
+            level=log.level,
+            request_ids=[log.request_id],
+            window_seconds=WINDOW_SECONDS,
+            reason=f"Template appeared {current_count} times in the last {WINDOW_SECONDS} seconds.",
+        )
+        add_anomaly(anomaly.model_dump())
 
-        if count >= 3:
+    if log.level.upper() == "ERROR" and current_count >= ERROR_BURST_THRESHOLD:
+        if should_emit_anomaly(log.service, template_key, "error_burst", ts):
             anomaly = AnomalyEvent(
-                anomaly_type="repeated_error",
+                anomaly_type="error_burst",
                 service=log.service,
                 message=normalized_message,
                 template_key=template_key,
-                count=count,
+                count=current_count,
                 level=log.level,
-                request_ids=TEMPLATE_REQUEST_IDS[(log.service, template_key)][-5:],
+                request_ids=[log.request_id],
+                window_seconds=WINDOW_SECONDS,
+                reason=f"Error template repeated {current_count} times in the last {WINDOW_SECONDS} seconds.",
             )
-            add_anomaly(anomaly.dict())
+            add_anomaly(anomaly.model_dump())
 
     return {
         "status": "ingested",
         "template_key": template_key,
         "normalized_message": normalized_message,
+        "window_count": current_count,
     }
 
 
@@ -87,3 +118,8 @@ async def logs():
 @app.get("/anomalies")
 async def anomalies():
     return {"anomalies": get_anomalies()}
+
+
+@app.get("/incidents")
+async def incidents():
+    return {"incidents": serialize_incidents()}

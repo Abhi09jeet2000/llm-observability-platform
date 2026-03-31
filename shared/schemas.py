@@ -21,3 +21,5 @@ class AnomalyEvent(BaseModel):
     count: int
     level: str
     request_ids: List[str]
+    window_seconds: int
+    reason: str
