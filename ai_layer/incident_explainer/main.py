@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 from fastapi import FastAPI, HTTPException
 import httpx
 from shared.gemini_client import get_gemini_client, MODEL_NAME
