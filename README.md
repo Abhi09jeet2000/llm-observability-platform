@@ -710,14 +710,9 @@ You may need to generate more load so thresholds are crossed.
 
 This project is useful for:
 
+- to solve production issues
+- to reduce time required for developer to find bugs
 - engineers learning observability design
 - developers experimenting with LLM-assisted SRE workflows
 - building a portfolio project around AI + systems
-- to solve production issues
-- to reduce time required for developer to find bugs
 
----
-
-# License
-
-Add a license here if you want to make the project open source for reuse.
