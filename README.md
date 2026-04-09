@@ -718,12 +718,6 @@ This project is useful for:
 
 ---
 
-# Author
-
-GitHub: [Abhi09jeet2000](https://github.com/Abhi09jeet2000)
-
----
-
 # License
 
 Add a license here if you want to make the project open source for reuse.
